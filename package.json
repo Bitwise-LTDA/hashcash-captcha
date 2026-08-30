@@ -1,0 +1,32 @@
+{
+  "name": "hashcash-captcha",
+  "version": "0.1.0",
+  "description": "Minimal SHA-256 proof-of-work core for nonce-based challenges.",
+  "type": "module",
+  "main": "src/pow.js",
+  "exports": {
+    ".": "./src/pow.js",
+    "./browser": "./src/pow.browser.js",
+    "./webgpu": "./src/pow.webgpu.js",
+    "./client": "./src/client.js",
+    "./widget": "./src/widget.js",
+    "./server": "./src/server.js",
+    "./redis": "./src/redis-store.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/pow.test.js test/pow.browser.test.js test/server.test.js test/redis-store.test.js test/pow.webgpu.test.js test/client.test.js test/widget.test.js test/express-example.test.js",
+    "test:webgpu:serve": "node scripts/webgpu-browser-server.mjs",
+    "example:express": "node examples/express/index.js"
+  },
+  "devDependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

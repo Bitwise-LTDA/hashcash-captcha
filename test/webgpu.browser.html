@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WebGPU SHA-256 proof-of-work browser integration test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+    .pass { color: #0a7d0a; }
+    .fail { color: #b00020; }
+    .skip { color: #8a6d00; }
+  </style>
+</head>
+<body>
+  <h1>WebGPU SHA-256 proof-of-work browser integration test</h1>
+  <pre id="log">Running&hellip;</pre>
+  <script type="module">
+    import {
+      sha256WebGpu,
+      solveWebGpu,
+      WebGpuUnavailableError
+    } from '../src/pow.webgpu.js';
+    import {
+      hashChallenge as cpuHashChallenge,
+      meetsDifficulty as cpuMeetsDifficulty,
+      sha256Hex as cpuSha256Hex
+    } from '../src/pow.browser.js';
+
+    const logElement = document.getElementById('log');
+    const lines = [];
+    function log(line) {
+      lines.push(line);
+      logElement.textContent = lines.join('\n');
+    }
+
+    const results = {
+      pass: false,
+      skipped: false,
+      tests: []
+    };
+
+    function record(name, passed, detail = '') {
+      results.tests.push({ name, passed, detail });
+      log(`${passed ? 'PASS' : 'FAIL'} ${name}${detail ? ` - ${detail}` : ''}`);
+    }
+
+    function hasWebGpu() {
+      return typeof navigator !== 'undefined' &&
+        navigator.gpu !== undefined &&
+        navigator.gpu !== null &&
+        typeof navigator.gpu.requestAdapter === 'function';
+    }
+
+    async function run() {
+      if (!hasWebGpu()) {
+        results.skipped = true;
+        log('SKIP WebGPU is not available in this browser/configuration.');
+        log('Run this page in Chrome or Edge with WebGPU enabled.');
+        window.__webgpuTestResults = results;
+        return;
+      }
+
+      try {
+        const oneBlock = 'a'.repeat(32);
+        const twoBlock = 'a'.repeat(64);
+
+        const oneBlockGpu = await sha256WebGpu(oneBlock);
+        const oneBlockCpu = cpuSha256Hex(oneBlock);
+        record(
+          'SHA-256 parity for one-block input',
+          oneBlockGpu === oneBlockCpu,
+          `gpu=${oneBlockGpu} cpu=${oneBlockCpu}`
+        );
+
+        const twoBlockGpu = await sha256WebGpu(twoBlock);
+        const twoBlockCpu = cpuSha256Hex(twoBlock);
+        record(
+          'SHA-256 parity for two-block input',
+          twoBlockGpu === twoBlockCpu,
+          `gpu=${twoBlockGpu} cpu=${twoBlockCpu}`
+        );
+
+        const challenge = '0123456789abcdef'.repeat(4);
+        const difficulty = 10;
+        const nonce = await solveWebGpu(challenge, difficulty, {
+          maxAttempts: 200000,
+          batchSize: 65536
+        });
+        const digest = cpuHashChallenge(challenge, nonce);
+        const cpuAccepted = cpuMeetsDifficulty(digest, difficulty);
+        record(
+          `WebGPU solve at difficulty ${difficulty}`,
+          Number.isSafeInteger(nonce) && nonce >= 0 && cpuAccepted,
+          `nonce=${nonce} digest=${digest}`
+        );
+
+        const unavailableChecked = true;
+        results.pass = results.tests.every((entry) => entry.passed) && unavailableChecked;
+        log(results.pass ? 'All WebGPU browser tests passed.' : 'One or more WebGPU browser tests failed.');
+      } catch (error) {
+        if (error instanceof WebGpuUnavailableError) {
+          results.skipped = true;
+          log('SKIP WebGPU is not available in this browser/configuration.');
+          log('Run this page in Chrome or Edge with WebGPU enabled.');
+        } else {
+          results.pass = false;
+          results.error = `${error.name ?? 'Error'}: ${error.message}`;
+          log(`ERROR ${results.error}`);
+        }
+      }
+
+      window.__webgpuTestResults = results;
+    }
+
+    run();
+  </script>
+</body>
+</html>

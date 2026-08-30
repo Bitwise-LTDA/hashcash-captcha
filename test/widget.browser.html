@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>hashcash-captcha widget browser fixture</title>
+</head>
+<body>
+  <h1>hashcash-captcha widget browser fixture</h1>
+  <div id="mount"></div>
+  <pre id="results">Running…</pre>
+
+  <script type="module">
+    import { mountCaptcha, SOLVED_EVENT } from '../src/widget.js';
+
+    const results = [];
+    const resultsElement = document.getElementById('results');
+
+    function check(name, ok, detail = '') {
+      results.push(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` - ${detail}` : ''}`);
+      resultsElement.textContent = results.join('\n');
+    }
+
+    function clearMount() {
+      const mount = document.getElementById('mount');
+      mount.textContent = '';
+      return mount;
+    }
+
+    function directChallenge() {
+      return {
+        token: 'browser-token',
+        challenge: 'browser-challenge',
+        difficulty: 0
+      };
+    }
+
+    function waitForState(root, state) {
+      return new Promise((resolve, reject) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          if (root.getAttribute('data-state') === state) {
+            clearInterval(timer);
+            resolve();
+          } else if (Date.now() - started > 1000) {
+            clearInterval(timer);
+            reject(new Error(`Timed out waiting for ${state}`));
+          }
+        }, 5);
+      });
+    }
+
+    async function run() {
+      const headStyleCountBefore = document.head.querySelectorAll('style').length;
+
+      // 1. Idle rendering, default strings, and accessibility hooks.
+      const mount = clearMount();
+      const widget = mountCaptcha(mount, {
+        challenge: directChallenge(),
+        solve: async () => 7
+      });
+
+      const root = mount.firstElementChild;
+      const button = root.querySelector('.hc-button');
+      const cancel = root.querySelector('.hc-cancel');
+      const progress = root.querySelector('.hc-progress');
+      const status = root.querySelector('.hc-status');
+
+      check('widget is the only mount child', mount.children.length === 1);
+      check('idle state is exposed', root.getAttribute('data-state') === 'idle');
+      check('default idle label is "I\'m human"', button.textContent === "I'm human");
+      check('idle control is an enabled button', button instanceof HTMLButtonElement && button.type === 'button' && !button.disabled);
+      check('cancel control is a button', cancel instanceof HTMLButtonElement && cancel.type === 'button');
+      check('cancel is hidden while idle', cancel.hidden === true);
+      check('progress is hidden while idle', progress.hidden === true && progress.getAttribute('aria-hidden') === 'true');
+      check('accessible live status exists', status instanceof HTMLElement && status.getAttribute('role') === 'status' && status.getAttribute('aria-live') === 'polite');
+      check('status matches idle label', status.textContent === "I'm human");
+
+      button.focus();
+      check('idle button is keyboard-focusable', document.activeElement === button);
+      button.blur();
+
+      check(
+        'styles stay inside the widget subtree',
+        root.querySelector('style') !== null &&
+          document.head.querySelectorAll('style').length === headStyleCountBefore
+      );
+
+      // 2. Keyboard-accessible solving and cancel controls.
+      widget.reset();
+      let resolvePending;
+      const pending = new Promise((resolve) => {
+        resolvePending = resolve;
+      });
+      const solvingWidget = mountCaptcha(clearMount(), {
+        challenge: directChallenge(),
+        solve: () => pending,
+        solvingLabel: 'Working',
+        cancelLabel: 'Stop'
+      });
+      const solvingRoot = document.getElementById('mount').firstElementChild;
+      const solvingButton = solvingRoot.querySelector('.hc-button');
+      const solvingCancel = solvingRoot.querySelector('.hc-cancel');
+      const solvingProgress = solvingRoot.querySelector('.hc-progress');
+
+      solvingButton.click();
+      await waitForState(solvingRoot, 'solving');
+
+      check('solving state is exposed', solvingRoot.getAttribute('data-state') === 'solving');
+      check('solving button is disabled', solvingButton.disabled === true);
+      check('solving button uses solving label', solvingButton.textContent === 'Working');
+      check('animated progress is visible while solving', solvingProgress.hidden === false && solvingProgress.querySelector('.hc-progress-bar') !== null);
+      check('cancel is visible and enabled while solving', solvingCancel.hidden === false && solvingCancel.disabled === false);
+      check('cancel uses cancel label', solvingCancel.textContent === 'Stop');
+
+      solvingCancel.focus();
+      check('cancel button is keyboard-focusable', document.activeElement === solvingCancel);
+
+      solvingCancel.click();
+      await waitForState(solvingRoot, 'idle');
+      check('cancel returns widget to idle', solvingRoot.getAttribute('data-state') === 'idle');
+
+      // 3. Solved result delivery through callback and bubbling event.
+      let solvedResult = null;
+      const mount2 = clearMount();
+      let solvedEvent = null;
+      mount2.addEventListener(SOLVED_EVENT, (event) => {
+        solvedEvent = event;
+      });
+      const solvedWidget = mountCaptcha(mount2, {
+        challenge: directChallenge(),
+        solve: async () => 42,
+        onSolved: (result) => {
+          solvedResult = result;
+        }
+      });
+      const solvedRoot = mount2.firstElementChild;
+      solvedRoot.querySelector('.hc-button').click();
+      await waitForState(solvedRoot, 'solved');
+
+      check(
+        'solved result is delivered to onSolved',
+        solvedResult !== null &&
+          solvedResult.token === 'browser-token' &&
+          solvedResult.nonce === 42
+      );
+      check(
+        'solved result is delivered as a bubbling custom event',
+        solvedEvent !== null &&
+          solvedEvent.detail.token === 'browser-token' &&
+          solvedEvent.detail.nonce === 42
+      );
+      check('solved state is exposed', solvedRoot.getAttribute('data-state') === 'solved');
+      check('solved label is shown', solvedRoot.querySelector('.hc-button').textContent === 'Verified');
+
+      // 4. Cleanup and reset.
+      solvedWidget.reset();
+      check('reset returns solved widget to idle', solvedRoot.getAttribute('data-state') === 'idle');
+      solvedWidget.destroy();
+      check('destroy removes the rendered widget', mount2.children.length === 0);
+
+      // Clean up the pending solving widget without leaving work behind.
+      resolvePending(0);
+      solvingWidget.destroy();
+
+      if (results.some((line) => line.startsWith('FAIL'))) {
+        resultsElement.textContent += '\nFIXTURE FAILED';
+        throw new Error('Widget browser fixture failed');
+      }
+      resultsElement.textContent += '\nFIXTURE PASSED';
+    }
+
+    run().catch((error) => {
+      results.push(`ERROR ${error && error.stack ? error.stack : error}`);
+      resultsElement.textContent = results.join('\n');
+    });
+  </script>
+</body>
+</html>
